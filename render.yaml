@@ -1,12 +1,11 @@
-version: 1
 services:
   - type: web
-    name: cm-nemu
-    env: node
+    name: game8-proxy
+    runtime: node
     plan: free
+    region: singapore
     buildCommand: npm install
     startCommand: npm start
-    autoDeploy: true
     envVars:
       - key: NODE_VERSION
-        value: 16
+        value: 20
