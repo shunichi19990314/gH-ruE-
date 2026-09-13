@@ -1,5 +1,5 @@
 {
-  "name": "cf-worker-proxy",
+  "name": "game8-proxy",
   "version": "1.0.0",
   "main": "server.js",
   "scripts": {
