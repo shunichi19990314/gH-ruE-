@@ -2,12 +2,12 @@ const express = require('express');
 const fetch = require('node-fetch');
 
 const app = express();
+
+// Cloudflare WorkerのURL
 const CF_WORKER_URL = "https://game8.shunichi-0314.workers.dev";
 
-// 生ボディを受け取る（必要に応じて）
 app.use(express.raw({ type: '*/*', limit: '50mb' }));
 
-// ホップバイホップヘッダー（転送しないもの）
 const HOP_BY_HOP = new Set([
   'connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization',
   'te', 'trailers', 'transfer-encoding', 'upgrade', 'host'
@@ -17,7 +17,6 @@ app.all('*', async (req, res) => {
   try {
     const targetUrl = CF_WORKER_URL + req.originalUrl;
 
-    // リクエストヘッダーをできるだけ引き継ぐ
     const headers = {};
     for (const [key, value] of Object.entries(req.headers)) {
       if (!HOP_BY_HOP.has(key.toLowerCase()) && value) {
@@ -25,20 +24,22 @@ app.all('*', async (req, res) => {
       }
     }
 
-    // Workerがドメイン書き換えをするために必須
+    // WorkerにRenderのドメインを伝える（リンク書き換え用）
     headers['X-Forwarded-Host'] = req.get('host');
     headers['X-Forwarded-Proto'] = 'https';
     headers['X-Forwarded-For'] = req.ip;
 
-    // Accept-Encodingは明示的に指定（圧縮を正しく扱うため）
+    // 文字化け対策
+    headers['Accept'] = req.headers['accept'] || 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8';
+    headers['Accept-Language'] = req.headers['accept-language'] || 'ja,en-US;q=0.9,en;q=0.8';
     headers['Accept-Encoding'] = 'gzip, deflate, br';
 
     const fetchOptions = {
       method: req.method,
       headers,
-      timeout: 60000,          // Tier表は重いので長めに
-      compress: true,          // node-fetchに解凍させる
-      redirect: 'manual',      // リダイレクトは自分で制御
+      timeout: 60000,
+      compress: true,
+      redirect: 'manual',
       body: ['GET', 'HEAD'].includes(req.method) ? undefined : req.body
     };
 
@@ -48,22 +49,31 @@ app.all('*', async (req, res) => {
     if ([301, 302, 303, 307, 308].includes(response.status)) {
       const location = response.headers.get('location');
       if (location) {
-        // 絶対URLの場合はそのまま、相対の場合はWorker経由に
-        const redirectUrl = location.startsWith('http') 
-          ? location 
-          : CF_WORKER_URL + location;
-        return res.redirect(response.status, redirectUrl);
+        return res.redirect(response.status, location);
       }
     }
 
-    // レスポンスヘッダーの転送
+    // Content-Typeの取得と文字化け対策
+    let contentType = response.headers.get('content-type') || '';
+
+    if (
+      contentType.includes('text/') ||
+      contentType.includes('html') ||
+      contentType.includes('javascript') ||
+      contentType.includes('json')
+    ) {
+      if (!contentType.toLowerCase().includes('charset')) {
+        contentType += '; charset=utf-8';
+      }
+    }
+
+    // レスポンスヘッダーを転送
     response.headers.forEach((value, key) => {
       const lowerKey = key.toLowerCase();
-      // 転送しないヘッダー
       if (
         HOP_BY_HOP.has(lowerKey) ||
-        lowerKey === 'content-encoding' ||   // 解凍済みなので不要
-        lowerKey === 'content-length' ||     // サイズが変わるため
+        lowerKey === 'content-encoding' ||
+        lowerKey === 'content-length' ||
         lowerKey === 'transfer-encoding'
       ) {
         return;
@@ -71,12 +81,13 @@ app.all('*', async (req, res) => {
       res.set(key, value);
     });
 
-    // CORS（必要なら）
+    // Content-Typeを明示的にセット（charset付き）
+    res.set('Content-Type', contentType);
+
     res.set('Access-Control-Allow-Origin', '*');
     res.set('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
     res.set('Access-Control-Allow-Headers', '*');
 
-    // ボディを返す
     const buffer = await response.buffer();
     res.status(response.status).send(buffer);
 
@@ -86,7 +97,6 @@ app.all('*', async (req, res) => {
   }
 });
 
-// OPTIONS対応
 app.options('*', (req, res) => {
   res.set('Access-Control-Allow-Origin', '*');
   res.set('Access-Control-Allow-Methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
@@ -96,5 +106,5 @@ app.options('*', (req, res) => {
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
-  console.log(`Proxy running on port ${port}`);
+  console.log(`Game8 Proxy running on port ${port}`);
 });
